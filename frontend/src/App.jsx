@@ -1,15 +1,24 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, CircleMarker, Popup, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import { api, setTokens, clearTokens, getToken } from "./api";
 
-const bpeIcon = new L.Icon({
-  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-});
+// Chargement par tuiles : la carte est découpée en carrés de TILE degrés.
+// Seuls les carrés visibles et pas encore chargés sont demandés à l'API.
+const TILE = 0.1;
+const MIN_ZOOM = 12; // en dessous, trop d'équipements : on ne charge rien
+
+function tilesFor(view) {
+  const tiles = [];
+  for (let x = Math.floor(view.west / TILE); x <= Math.floor(view.east / TILE); x++) {
+    for (let y = Math.floor(view.south / TILE); y <= Math.floor(view.north / TILE); y++) {
+      tiles.push({ key: `${x}:${y}`, bbox: [x * TILE, y * TILE, (x + 1) * TILE, (y + 1) * TILE].map((v) => v.toFixed(4)).join(",") });
+    }
+  }
+  return tiles;
+}
+
+const DOMAINE_COLORS = { A: "#2563eb", B: "#dc2626", C: "#7c3aed", D: "#059669", E: "#0891b2", F: "#d97706", G: "#db2777" };
 
 const prospectIcon = new L.Icon({
   iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-orange.png",
@@ -27,7 +36,7 @@ function MapWatcher({ onBoundsChange, addMode, onMapClick }) {
       clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
         const b = map.getBounds();
-        onBoundsChange([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(","));
+        onBoundsChange({ west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth(), zoom: map.getZoom() });
       }, 300);
     },
     click: (e) => {
@@ -39,7 +48,7 @@ function MapWatcher({ onBoundsChange, addMode, onMapClick }) {
 
   useEffect(() => {
     const b = map.getBounds();
-    onBoundsChange([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(","));
+    onBoundsChange({ west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth(), zoom: map.getZoom() });
   }, [map, onBoundsChange]);
 
   return null;
@@ -58,11 +67,13 @@ export default function App() {
   const [selectedVilles, setSelectedVilles] = useState([]);
   const [villeSearch, setVilleSearch] = useState("");
 
-  const [bbox, setBbox] = useState(null);
+  const [view, setView] = useState(null);
   const [bpeMap, setBpeMap] = useState({});
-  const loadedIdsRef = useRef(new Set());
-  const [loadingBpe, setLoadingBpe] = useState(false);
-  const [totalInView, setTotalInView] = useState(0);
+  const loadedTilesRef = useRef(new Set());
+  const generationRef = useRef(0);
+  const [pending, setPending] = useState(0);
+  const loadingBpe = pending > 0;
+  const [details, setDetails] = useState({});
 
   const [implantations, setImplantations] = useState([]);
   const [addMode, setAddMode] = useState(false);
@@ -89,51 +100,50 @@ export default function App() {
     }
   }, []);
 
+  const filtersKey = JSON.stringify([selectedD1, selectedD2, selectedD3, selectedVilles]);
+
   // Réinitialiser le cache local lorsque les filtres changent
   useEffect(() => {
-    loadedIdsRef.current = new Set();
+    generationRef.current += 1;
+    loadedTilesRef.current = new Set();
     setBpeMap({});
-  }, [selectedD1, selectedD2, selectedD3, selectedVilles]);
+  }, [filtersKey]);
 
-  // Chargement incrémental par emprise géographique + filtres actifs
+  // Chargement incrémental : uniquement les tuiles visibles pas encore chargées
   useEffect(() => {
-    if (!bbox) return;
-    let cancelled = false;
-    setLoadingBpe(true);
-
-    const alreadyLoaded = Array.from(loadedIdsRef.current);
-    api
-      .getBPE({
-        bbox,
-        domaine1: selectedD1,
-        domaine2: selectedD2,
-        domaine3: selectedD3,
-        villes: selectedVilles,
-        excludeIds: alreadyLoaded.slice(0, 500),
-      })
-      .then((res) => {
-        if (cancelled) return;
-        setTotalInView(res.total_in_view);
-        if (res.results?.length) {
+    if (!view || view.zoom < MIN_ZOOM) return;
+    const generation = generationRef.current;
+    const domaines = [...selectedD1, ...selectedD2, ...selectedD3];
+    const nouvelles = tilesFor(view).filter((t) => !loadedTilesRef.current.has(t.key));
+    for (const tile of nouvelles) {
+      loadedTilesRef.current.add(tile.key);
+      setPending((n) => n + 1);
+      api
+        .getEquipements({ bbox: tile.bbox, domaines, villes: selectedVilles })
+        .then((items) => {
+          if (generation !== generationRef.current || !items.length) return;
           setBpeMap((prev) => {
             const next = { ...prev };
-            for (const item of res.results) {
-              loadedIdsRef.current.add(item.id);
-              next[item.id] = item;
-            }
+            for (const item of items) next[item.id] = item;
             return next;
           });
-        }
-      })
-      .catch(console.error)
-      .finally(() => {
-        if (!cancelled) setLoadingBpe(false);
-      });
+        })
+        .catch((err) => {
+          console.error(err);
+          loadedTilesRef.current.delete(tile.key); // sera retentée au prochain déplacement
+        })
+        .finally(() => setPending((n) => n - 1));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, filtersKey]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [bbox, selectedD1, selectedD2, selectedD3, selectedVilles]);
+  const loadDetail = (id) => {
+    if (details[id]) return;
+    api
+      .getEquipement(id)
+      .then((d) => setDetails((prev) => ({ ...prev, [id]: d })))
+      .catch(console.error);
+  };
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
@@ -403,7 +413,9 @@ export default function App() {
             </button>
           </div>
           <p className="muted">
-            Affichés : <strong>{bpeItems.length}</strong> / {totalInView} dans la zone
+            {view && view.zoom < MIN_ZOOM
+              ? "Zoomez pour afficher les équipements."
+              : <>Équipements chargés : <strong>{bpeItems.length}</strong></>}
             {loadingBpe ? " (chargement...)" : ""}
           </p>
 
@@ -467,36 +479,54 @@ export default function App() {
       </aside>
 
       <main className="map-wrapper">
-        <MapContainer center={[47.3220, 5.0415]} zoom={10} className="map">
+        <MapContainer center={[47.3220, 5.0415]} zoom={14} className="map" preferCanvas={true}>
           <TileLayer
             attribution='&copy; OpenStreetMap contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           <MapWatcher
-            onBoundsChange={setBbox}
+            onBoundsChange={setView}
             addMode={addMode}
             onMapClick={handleMapClick}
           />
 
-          {bpeItems.map((eq) => (
-            <Marker key={eq.id} position={[eq.lat, eq.lon]} icon={bpeIcon}>
-              <Popup>
-                <strong>{eq.nom}</strong>
-                <br />
-                <span>{eq.domaine3_code} — {eq.domaine3_libelle}</span>
-                <br />
-                <small>{eq.domaine1_libelle} &gt; {eq.domaine2_libelle}</small>
-                <br />
-                <span>{eq.adresse} {eq.codepostal} {eq.ville}</span>
-                {eq.siret && (
-                  <>
-                    <br />
-                    <small>SIRET : {eq.siret}</small>
-                  </>
-                )}
-              </Popup>
-            </Marker>
-          ))}
+          {bpeItems.map((eq) => {
+            const d = details[eq.id];
+            return (
+              <CircleMarker
+                key={eq.id}
+                center={[eq.lat, eq.lon]}
+                radius={5}
+                pathOptions={{ color: DOMAINE_COLORS[eq.domaine1_code] || "#2563eb", weight: 1, fillOpacity: 0.7 }}
+                eventHandlers={{ popupopen: () => loadDetail(eq.id) }}
+              >
+                <Popup>
+                  <strong>{eq.nom || "(sans nom)"}</strong>
+                  <br />
+                  <span>{eq.domaine3_code} — {eq.domaine3_libelle}</span>
+                  {d ? (
+                    <>
+                      <br />
+                      <small>{d.domaine1.libelle} &gt; {d.domaine2.libelle}</small>
+                      <br />
+                      <span>{d.adresse} {d.codepostal} {d.ville}</span>
+                      {d.siret && (
+                        <>
+                          <br />
+                          <small>SIRET : {d.siret}</small>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <br />
+                      <small>{eq.ville} · chargement de la fiche…</small>
+                    </>
+                  )}
+                </Popup>
+              </CircleMarker>
+            );
+          })}
 
           {implantations.map((imp) => (
             <Marker

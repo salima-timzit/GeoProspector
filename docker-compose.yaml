@@ -38,17 +38,19 @@ services:
       sh -c "python manage.py migrate --noinput &&
              python manage.py runserver 0.0.0.0:8000"
 
-  # Frontend (personne C) : décommenter une fois le projet Vite créé dans ./frontend
-  # frontend:
-  #   image: node:24-alpine
-  #   working_dir: /app
-  #   volumes:
-  #     - ./frontend:/app
-  #   ports:
-  #     - "5173:5173"
-  #   command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
-  #   depends_on:
-  #     - backend
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    # Code monté en volume ; node_modules reste celui de l'image
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      VITE_API_URL: http://localhost:8000/api
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
 
 volumes:
   pgdata:
