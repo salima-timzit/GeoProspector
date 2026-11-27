@@ -106,9 +106,40 @@ Documentation complète et interactive : **http://localhost:8000/api/docs/**
 | GET | `/api/equipements/?bbox=&domaines=&villes=` | – | Équipements visibles (GeoJSON) |
 | GET | `/api/equipements/{id}/` | – | Fiche d'un équipement |
 | GET / POST | `/api/implantations/` | JWT | Mes implantations |
-| PATCH / DELETE | `/api/implantations/{id}/` | JWT | Modifier / supprimer une implantation |
+| GET / PATCH / DELETE | `/api/implantations/{id}/` | JWT | Voir / modifier / supprimer une implantation |
 
 En-tête d'authentification : `Authorization: Bearer <access>`.
+
+#### Détail des routes carte (publiques)
+
+- **`GET /api/domaines/`** : `[{code, libelle, enfants: [{code, libelle, enfants: [{code, libelle}]}]}]`.
+- **`GET /api/villes/?search=dij`** : `[{nom, codepostal, id_dept}]`, triées par nom. La recherche est une recherche « contient », sans tenir compte des majuscules, et renvoie au plus 20 résultats. Sans `search`, toutes les villes sont renvoyées.
+- **`GET /api/equipements/`** : renvoie une `FeatureCollection` GeoJSON. Chaque Feature contient un `Point [lon, lat]` et les propriétés `{id, nom, ville, domaine1_code, domaine3_code, domaine3_libelle}`.
+  - `bbox=minLon,minLat,maxLon,maxLat` (WGS84, **longitude d'abord**). Ce paramètre est **obligatoire**, sauf si `villes` est fourni.
+  - `domaines=A,B2,B207` : codes de n'importe quel niveau, séparés par des virgules (1 caractère = niveau 1, 2 = niveau 2, 4 = niveau 3).
+  - `villes=Dijon,Beaune` : noms exacts, tels que renvoyés par `/api/villes/`.
+  - Les filtres se combinent : ET entre paramètres, OU entre les valeurs d'un même paramètre. Les équipements sans coordonnées sont exclus.
+  - Un paramètre invalide (bbox mal formée ou inversée, code de domaine qui ne fait ni 1, ni 2, ni 4 caractères, etc.) renvoie `400 {"detail": "..."}`.
+- **`GET /api/equipements/{uuid}/`** : renvoie `{id, nom, adresse, codepostal, ville, siret, dept: {id_dept, libelle}, domaine1|2|3: {code, libelle}, lon, lat}`, ou `404` si l'équipement n'existe pas.
+
+Les routes carte ignorent l'en-tête `Authorization` : un token expiré ne provoque donc pas d'erreur 401.
+
+#### Détail des implantations (JWT obligatoire)
+
+- Corps pour `POST` / `PATCH` : `{lon, lat, domaine3_code, titre, annotations, commentaire}`.
+  - `POST` : `lon`, `lat` et `titre` sont obligatoires ; `domaine3_code` peut valoir `null`.
+  - `PATCH` : n'importe quel sous-ensemble des champs.
+- Réponses :
+  - un élément : `Feature` GeoJSON avec les propriétés `{id, titre, domaine3_code, domaine3_libelle, annotations, commentaire, created_at, updated_at}` ;
+  - la liste : `FeatureCollection`, du plus récent au plus ancien.
+- Codes de retour : `201` à la création, `204` à la suppression, `400` si la validation échoue, `401` sans token.
+- Un utilisateur ne voit que ses propres points : ceux d'un autre utilisateur renvoient `404`.
+
+#### Tests
+
+```bash
+docker compose exec backend python manage.py test
+```
 
 ### Chargement optimisé de la carte
 
