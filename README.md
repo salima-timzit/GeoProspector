@@ -107,6 +107,8 @@ Documentation complète et interactive : **http://localhost:8000/api/docs/**
 | GET | `/api/villes/?search=` | – | Recherche de villes |
 | GET | `/api/equipements/?bbox=&domaines=&villes=` | – | Équipements visibles (GeoJSON) |
 | GET | `/api/equipements/{id}/` | – | Fiche d'un équipement |
+| GET | `/api/equipements/recherche/?q=&ville=` | – | Chercher un équipement par son nom (sans tenir compte des accents, 20 max) |
+| GET | `/api/geocodage/?q=` | – | Géolocaliser une adresse postale (API Géoplateforme de l'IGN) ; `dans_zone` et `message` si elle est hors de la région |
 | GET / POST | `/api/implantations/` | JWT | Mes implantations |
 | GET / PATCH / DELETE | `/api/implantations/{id}/` | JWT | Voir / modifier / supprimer une implantation |
 
