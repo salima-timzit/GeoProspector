@@ -142,8 +142,16 @@ Les routes carte ignorent l'en-tête `Authorization` : un token expiré ne provo
 #### Tests
 
 ```bash
-docker compose exec backend python manage.py test
+docker compose exec backend python manage.py test              # les 42 tests
+docker compose exec backend python manage.py test bpe.test_import   # seulement l'import
 ```
+
+| Fichier | Ce qui est testé |
+|---|---|
+| `bpe/test_import.py` | Commande `import_bpe` : filtre de la région, normalisation des 3 niveaux de domaines, nettoyage des valeurs, équipements sans coordonnées, import rejouable sans toucher aux implantations, erreurs |
+| `bpe/tests.py` | Routes de la carte : domaines, villes, équipements (bbox, filtres), fiche |
+| `bpe/test_geocodage.py` | Géocodage (service IGN simulé, adresse hors zone) et recherche par nom |
+| `implantations/tests.py` | Auth JWT, CRUD et isolation des implantations entre utilisateurs |
 
 ### Chargement optimisé de la carte
 
