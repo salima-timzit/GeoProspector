@@ -1,4 +1,4 @@
-"""Endpoints publics de la carte – à compléter par la personne B.
+"""Endpoints publics de la carte.
 
 Contrat validé en équipe :
     GET /api/domaines/                       -> arbre domaine1 > domaine2 > domaine3
@@ -6,10 +6,14 @@ Contrat validé en équipe :
     GET /api/equipements/?bbox=minLon,minLat,maxLon,maxLat&domaines=A1,B201&villes=Dijon
                                              -> GeoJSON FeatureCollection
     GET /api/equipements/<uuid>/             -> fiche complète
-
-Astuce bbox : Polygon.from_bbox((minx, miny, maxx, maxy)) puis
-Bpe.objects.filter(geom__bboverlaps=poly)  (utilise l'index GiST).
 """
-from django.urls import path  # noqa: F401
+from django.urls import path
 
-urlpatterns = []
+from . import views
+
+urlpatterns = [
+    path("domaines/", views.DomainesView.as_view(), name="domaines"),
+    path("villes/", views.VillesView.as_view(), name="villes"),
+    path("equipements/", views.EquipementsView.as_view(), name="equipements"),
+    path("equipements/<uuid:pk>/", views.EquipementDetailView.as_view(), name="equipement-detail"),
+]
