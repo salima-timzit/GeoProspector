@@ -1,4 +1,4 @@
-# Prospection commerciale géographique – Groupe 2 (Bourgogne-Franche-Comté)
+d# Prospection commerciale géographique – Groupe 2 (Bourgogne-Franche-Comté)
 
 Application web pour explorer les équipements de la **Base permanente des équipements (BPE 2025)** de l'INSEE sur la région **27 – Bourgogne-Franche-Comté** (~117 000 équipements), et enregistrer ses propres **implantations commerciales potentielles**.
 
@@ -11,9 +11,11 @@ Application web pour explorer les équipements de la **Base permanente des équi
 ## Installation
 
 Prérequis : Docker et Docker Compose.
-
+> **Mac Apple Silicon (M1, M2, M3…)** : l'image `postgis/postgis` n'existe qu'en version amd64.
+> Le `docker-compose.yaml` force donc `platform: linux/amd64` pour la base de données.
+> Dans Docker Desktop, cochez **Settings → General → « Use Rosetta for x86_64/amd64 emulation on Apple Silicon »**, puis « Apply & restart ».
 ```bash
-git clone <url-du-depot> && cd <depot>
+git clone <https://github.com/salima-timzit/GeoProspector.git> && cd <GeoProspector>
 cp .env.example .env
 docker compose up -d --build
 ```
