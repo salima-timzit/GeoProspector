@@ -1,0 +1,17 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Données : trop lourdes pour GitHub, à télécharger (voir README)
+data/*
+!data/.gitkeep
+
+# Front
+node_modules/
+dist/
+
+.DS_Store
+.idea/
+.vscode/

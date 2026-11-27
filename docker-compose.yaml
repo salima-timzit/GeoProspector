@@ -1,0 +1,54 @@
+services:
+  db:
+    image: postgis/postgis:18-3.6
+    # L'image officielle n'existe qu'en amd64 : émulée sur les Mac Apple Silicon (M1/M2/M3…)
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      # PostgreSQL 18+ : le volume se monte sur /var/lib/postgresql (et non plus .../data)
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+    # Le code reste en dehors du conteneur : il est monté en volume
+    volumes:
+      - ./backend:/app
+      - ./data:/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
+
+  # Frontend (personne C) : décommenter une fois le projet Vite créé dans ./frontend
+  # frontend:
+  #   image: node:24-alpine
+  #   working_dir: /app
+  #   volumes:
+  #     - ./frontend:/app
+  #   ports:
+  #     - "5173:5173"
+  #   command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+  #   depends_on:
+  #     - backend
+
+volumes:
+  pgdata:
