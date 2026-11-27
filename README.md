@@ -134,14 +134,6 @@ backend/
 frontend/             # React + MapLibre
 ```
 
-## Équipe
-
-| Rôle | Membre |
-|---|---|
-| A – Data & Infra | … |
-| B – API backend | … |
-| C – Frontend | … |
-
 ## Post-mortem
 
 Voir [POSTMORTEM.md](POSTMORTEM.md).
