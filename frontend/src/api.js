@@ -135,6 +135,13 @@ export const api = {
 
   getEquipement: (id) => request(`/equipements/${id}/`),
 
+  // Recherche d'équipements par nom (20 résultats max)
+  rechercherEquipements: (q) =>
+    request(`/equipements/recherche/?${new URLSearchParams({ q }).toString()}`),
+
+  // Géocodage d'une adresse : {label, lon, lat, dept, dans_zone, message}
+  geocoder: (q) => request(`/geocodage/?${new URLSearchParams({ q }).toString()}`),
+
   getImplantations: async () => {
     const fc = await request("/implantations/");
     return fc.features.map(toImplantation);

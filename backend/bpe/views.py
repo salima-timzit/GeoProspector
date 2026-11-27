@@ -12,7 +12,10 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Bpe, Domaine1
+from django.conf import settings
+
+from .geocodage import GeocodageIndisponible, rechercher_adresse
+from .models import Bpe, Dept, Domaine1
 
 VILLES_SEARCH_LIMIT = 20
 # Niveau de domaine déduit de la longueur du code : A -> 1, A1 -> 2, A101 -> 3
@@ -241,4 +244,126 @@ class EquipementDetailView(APIView):
             "domaine3": {"code": d3.code, "libelle": d3.libelle},
             "lon": round(e.geom.x, 6) if e.geom else None,
             "lat": round(e.geom.y, 6) if e.geom else None,
+        })
+
+
+RECHERCHE_LIMIT = 20
+
+
+class RechercheEquipementsView(APIView):
+    """Recherche d'équipements par leur nom (pour les retrouver sur la carte)."""
+
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    @extend_schema(
+        tags=["Carte"],
+        operation_id="equipements_recherche",
+        summary="Chercher un équipement par son nom",
+        description=f"Texte contenu dans le nom (insensible à la casse et aux accents). {RECHERCHE_LIMIT} résultats maximum, "
+                    "équipements sans coordonnées exclus. Filtre optionnel `ville`.",
+        parameters=[
+            OpenApiParameter("q", str, required=True, description="Au moins 3 caractères, ex. `boulangerie`"),
+            OpenApiParameter("ville", str, description="Nom exact de la ville, ex. `Dijon`"),
+        ],
+        responses={200: OpenApiResponse(
+            response=OpenApiTypes.OBJECT,
+            examples=[OpenApiExample("Résultats", value=[{
+                "id": "3f2c…", "nom": "Boulangerie X", "ville": "Dijon", "codepostal": "21000",
+                "domaine1_code": "B", "domaine3_code": "B207", "domaine3_libelle": "Boulangerie-pâtisserie",
+                "lon": 5.041, "lat": 47.322,
+            }])],
+        ), 400: ERREUR_400},
+    )
+    def get(self, request):
+        q = request.query_params.get("q", "").strip()
+        if len(q) < 3:
+            raise ValidationError({"detail": "Saisissez au moins 3 caractères du nom."})
+        qs = Bpe.objects.filter(geom__isnull=False, nom__unaccent__icontains=q)
+        ville = request.query_params.get("ville", "").strip()
+        if ville:
+            qs = qs.filter(ville=ville)
+        rows = qs.order_by("nom", "ville").values(
+            "id", "nom", "ville", "codepostal", "geom", "domaine3_id", "domaine3__libelle",
+            "domaine3__domaine2__domaine1_id",
+        )[:RECHERCHE_LIMIT]
+        return Response([
+            {
+                "id": str(r["id"]),
+                "nom": r["nom"],
+                "ville": r["ville"],
+                "codepostal": r["codepostal"],
+                "domaine1_code": r["domaine3__domaine2__domaine1_id"],
+                "domaine3_code": r["domaine3_id"],
+                "domaine3_libelle": r["domaine3__libelle"],
+                "lon": round(r["geom"].x, 6),
+                "lat": round(r["geom"].y, 6),
+            }
+            for r in rows
+        ])
+
+
+class GeocodageView(APIView):
+    """Géolocalise une adresse postale et indique si elle est dans la région couverte."""
+
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    @extend_schema(
+        tags=["Carte"],
+        summary="Géocoder une adresse postale",
+        description=(
+            "Interroge l'API Géoplateforme de l'IGN (Base Adresse Nationale) et renvoie la meilleure "
+            "correspondance. `dans_zone` vaut `false` si l'adresse est hors de la région importée ; "
+            "`message` contient alors le texte à afficher."
+        ),
+        parameters=[OpenApiParameter("q", str, required=True, description="Adresse saisie, ex. `1 rue de la Liberté Dijon`")],
+        responses={
+            200: OpenApiResponse(
+                response=OpenApiTypes.OBJECT,
+                examples=[
+                    OpenApiExample("Dans la zone", value={
+                        "label": "1 Rue de la Liberté 21000 Dijon", "lon": 5.0386, "lat": 47.3217,
+                        "dept": "21", "dans_zone": True, "message": None,
+                    }),
+                    OpenApiExample("Hors zone", value={
+                        "label": "10 Rue de Rivoli 75004 Paris", "lon": 2.3561, "lat": 48.8555,
+                        "dept": "75", "dans_zone": False,
+                        "message": "Adresse hors zone : 10 Rue de Rivoli 75004 Paris (département 75). "
+                                   "GeoProspector couvre uniquement la région Bourgogne-Franche-Comté.",
+                    }),
+                ],
+            ),
+            400: OpenApiResponse(description="Paramètre q manquant ou trop court"),
+            404: OpenApiResponse(description="Adresse introuvable"),
+            502: OpenApiResponse(description="Service de géocodage de l'IGN indisponible"),
+        },
+    )
+    def get(self, request):
+        q = request.query_params.get("q", "").strip()
+        if len(q) < 3:
+            raise ValidationError({"detail": "Saisissez une adresse d'au moins 3 caractères."})
+        try:
+            res = rechercher_adresse(q)
+        except GeocodageIndisponible:
+            return Response({"detail": "Le service de géocodage de l'IGN est indisponible, réessayez."}, status=502)
+        if res is None:
+            return Response({"detail": f"Adresse introuvable : « {q} »."}, status=404)
+
+        dans_zone = Dept.objects.filter(id_dept=res["dept"], region_id=settings.BPE_REGION).exists()
+        region = Dept.objects.filter(region_id=settings.BPE_REGION).select_related("region").first()
+        nom_region = region.region.libelle if region else f"région {settings.BPE_REGION}"
+        message = None
+        if not dans_zone:
+            message = (
+                f"Adresse hors zone : {res['label']} (département {res['dept']}). "
+                f"GeoProspector couvre uniquement la région {nom_region}."
+            )
+        return Response({
+            "label": res["label"],
+            "lon": res["lon"],
+            "lat": res["lat"],
+            "dept": res["dept"],
+            "dans_zone": dans_zone,
+            "message": message,
         })

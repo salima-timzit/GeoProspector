@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { MapContainer, TileLayer, Marker, CircleMarker, Popup, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, CircleMarker, Popup, Tooltip, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import { api, setTokens, clearTokens, getToken } from "./api";
 
@@ -75,6 +75,16 @@ export default function App() {
   const loadingBpe = pending > 0;
   const [details, setDetails] = useState({});
 
+  // Recherche : adresse postale ou nom d'équipement
+  const mapRef = useRef(null);
+  const [searchMode, setSearchMode] = useState("adresse");
+  const [searchQ, setSearchQ] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchMsg, setSearchMsg] = useState(null); // {type: "warn" | "error", text}
+  const [adresseTrouvee, setAdresseTrouvee] = useState(null);
+  const [resultatsEq, setResultatsEq] = useState([]);
+  const [equipementCible, setEquipementCible] = useState(null);
+
   const [implantations, setImplantations] = useState([]);
   const [addMode, setAddMode] = useState(false);
   const [editingImplantation, setEditingImplantation] = useState(null);
@@ -143,6 +153,39 @@ export default function App() {
       .getEquipement(id)
       .then((d) => setDetails((prev) => ({ ...prev, [id]: d })))
       .catch(console.error);
+  };
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    setSearchMsg(null);
+    setResultatsEq([]);
+    setSearching(true);
+    try {
+      if (searchMode === "adresse") {
+        const r = await api.geocoder(searchQ);
+        if (r.dans_zone) {
+          setAdresseTrouvee(r);
+          mapRef.current?.flyTo([r.lat, r.lon], 17);
+        } else {
+          setAdresseTrouvee(null);
+          setSearchMsg({ type: "warn", text: r.message });
+        }
+      } else {
+        const res = await api.rechercherEquipements(searchQ);
+        if (!res.length) setSearchMsg({ type: "warn", text: `Aucun équipement ne contient « ${searchQ} » dans son nom.` });
+        setResultatsEq(res);
+      }
+    } catch (err) {
+      setSearchMsg({ type: "error", text: err.message });
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const allerAEquipement = (eq) => {
+    setEquipementCible(eq);
+    loadDetail(eq.id);
+    mapRef.current?.flyTo([eq.lat, eq.lon], 18);
   };
 
   const handleAuthSubmit = async (e) => {
@@ -246,6 +289,67 @@ export default function App() {
           <h1>Geo Prospector</h1>
           <p>Exploration BPE 2025 & Prospection</p>
         </header>
+
+        <section className="card">
+          <div className="tabs">
+            <button
+              type="button"
+              className={searchMode === "adresse" ? "active" : ""}
+              onClick={() => { setSearchMode("adresse"); setSearchMsg(null); setResultatsEq([]); }}
+            >
+              Adresse
+            </button>
+            <button
+              type="button"
+              className={searchMode === "equipement" ? "active" : ""}
+              onClick={() => { setSearchMode("equipement"); setSearchMsg(null); }}
+            >
+              Équipement
+            </button>
+          </div>
+          <form onSubmit={handleSearch} className="search-row">
+            <input
+              placeholder={searchMode === "adresse" ? "Ex. 1 rue de la Liberté, Dijon" : "Ex. boulangerie, piscine, collège…"}
+              value={searchQ}
+              onChange={(e) => setSearchQ(e.target.value)}
+              required
+              minLength={3}
+            />
+            <button type="submit" className="btn-primary" disabled={searching}>
+              {searching ? "…" : "Chercher"}
+            </button>
+          </form>
+          {searchMsg && <p className={searchMsg.type === "warn" ? "alert-warn" : "error"}>{searchMsg.text}</p>}
+          {searchMode === "adresse" && adresseTrouvee && !searchMsg && (
+            <div className="found">
+              <span>📍 {adresseTrouvee.label}</span>
+              {user && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    handleMapClick({ lat: adresseTrouvee.lat, lon: adresseTrouvee.lon });
+                    setImpForm((f) => ({ ...f, titre: adresseTrouvee.label }));
+                  }}
+                >
+                  Placer une implantation ici
+                </button>
+              )}
+            </div>
+          )}
+          {searchMode === "equipement" && resultatsEq.length > 0 && (
+            <ul className="list results">
+              {resultatsEq.map((eq) => (
+                <li key={eq.id} className="list-item clickable" onClick={() => allerAEquipement(eq)}>
+                  <div>
+                    <strong>{eq.nom}</strong>
+                    <div className="small">{eq.domaine3_libelle} · {eq.ville}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
         <section className="card">
           <h2>Espace Prospection</h2>
@@ -479,7 +583,7 @@ export default function App() {
       </aside>
 
       <main className="map-wrapper">
-        <MapContainer center={[47.3220, 5.0415]} zoom={14} className="map" preferCanvas={true}>
+        <MapContainer ref={mapRef} center={[47.3220, 5.0415]} zoom={14} className="map" preferCanvas={true}>
           <TileLayer
             attribution='&copy; OpenStreetMap contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -527,6 +631,29 @@ export default function App() {
               </CircleMarker>
             );
           })}
+
+          {adresseTrouvee && (
+            <CircleMarker
+              center={[adresseTrouvee.lat, adresseTrouvee.lon]}
+              radius={11}
+              pathOptions={{ color: "#111827", weight: 3, fillColor: "#ffffff", fillOpacity: 0.9 }}
+            >
+              <Tooltip permanent direction="top" offset={[0, -10]}>{adresseTrouvee.label}</Tooltip>
+            </CircleMarker>
+          )}
+
+          {equipementCible && (
+            <CircleMarker
+              center={[equipementCible.lat, equipementCible.lon]}
+              radius={12}
+              pathOptions={{ color: "#111827", weight: 3, fillColor: DOMAINE_COLORS[equipementCible.domaine1_code] || "#2563eb", fillOpacity: 0.9 }}
+            >
+              <Tooltip permanent direction="top" offset={[0, -10]}>
+                {equipementCible.nom}
+                {details[equipementCible.id] && <> · {details[equipementCible.id].adresse} {details[equipementCible.id].ville}</>}
+              </Tooltip>
+            </CircleMarker>
+          )}
 
           {implantations.map((imp) => (
             <Marker
