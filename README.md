@@ -1,4 +1,4 @@
-d# Prospection commerciale géographique – Groupe 2 (Bourgogne-Franche-Comté)
+# Prospection commerciale géographique – Groupe 2 (Bourgogne-Franche-Comté)
 
 Application web pour explorer les équipements de la **Base permanente des équipements (BPE 2025)** de l'INSEE sur la région **27 – Bourgogne-Franche-Comté** (~117 000 équipements), et enregistrer ses propres **implantations commerciales potentielles**.
 
